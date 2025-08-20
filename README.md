@@ -5,9 +5,9 @@ Currently can load .obj files with textures and apply simple shading using norma
 ![a399e4](https://github.com/user-attachments/assets/8fbbb5c2-5925-4d5b-9d81-f96dfedc2175)
 
 TODO:
-   - Modularize code
-   - Multithreading
-   - Adapting to write a GPU shader
-   - Raytracing
-   - Loading/transformming multiple models and arranging scenes
-   - User interactable camera
+* [ ] Modularize code 
+* [ ] Multithreading
+* [ ] Adapting to write a GPU shader
+* [ ] Raytracing
+* [ ] Loading/transformming multiple models and arranging scenes
+* [ ] User interactable camera
