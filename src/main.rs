@@ -9,6 +9,97 @@ use anyhow::{Result, anyhow};
 use raylib::prelude::*;
 use bytemuck::cast_slice_mut;
 use image::{DynamicImage, GenericImageView};
+use rayon::prelude::*;
+use image::{RgbImage, Rgb};
+
+struct Vertex {
+    x: f32,
+    y: f32,
+    one_over_z: f32,  // 1.0 / z
+    u_over_z: f32,    // optional: for texture mapping
+    v_over_z: f32,    // optional
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Rect {
+    min_x: u32,
+    min_y: u32,
+    max_x: u32,
+    max_y: u32,
+}
+
+// helper methods
+impl Rect {
+    fn width(&self) -> u32 {
+        self.max_x - self.min_x
+    }
+    fn height(&self) -> u32 {
+        self.max_y - self.min_y
+    }
+}
+
+/// Subdivide a rectangle evenly with given depth
+fn subdivide(width: u32, height: u32, depth: u32) -> Vec<Rect> {
+    let mut rects = Vec::new();
+
+    let root = Rect {
+        min_x: 0,
+        min_y: 0,
+        max_x: width,
+        max_y: height,
+    };
+
+    fn recurse(r: Rect, vertical: bool, depth: u32, rects: &mut Vec<Rect>) {
+        if depth == 0 {
+            rects.push(r);
+            return;
+        }
+
+        let w = r.max_x - r.min_x;
+        let h = r.max_y - r.min_y;
+
+        if vertical {
+            let mid = r.min_x + w / 2;
+            let left = Rect { min_x: r.min_x, min_y: r.min_y, max_x: mid, max_y: r.max_y };
+            let right = Rect { min_x: mid, min_y: r.min_y, max_x: r.max_x, max_y: r.max_y };
+            recurse(left, !vertical, depth - 1, rects);
+            recurse(right, !vertical, depth - 1, rects);
+        } else {
+            let mid = r.min_y + h / 2;
+            let top = Rect { min_x: r.min_x, min_y: r.min_y, max_x: r.max_x, max_y: mid };
+            let bottom = Rect { min_x: r.min_x, min_y: mid, max_x: r.max_x, max_y: r.max_y };
+            recurse(top, !vertical, depth - 1, rects);
+            recurse(bottom, !vertical, depth - 1, rects);
+        }
+    }
+
+    recurse(root, true, depth, &mut rects);
+    rects
+}
+
+/// Save rectangles to an image file
+fn draw_rectangles(rects: &[Rect], width: u32, height: u32, filename: &str) {
+    let mut img = RgbImage::new(width, height);
+    let mut rng = rand::thread_rng();
+
+    for rect in rects {
+        let color = Rgb([
+            rng.gen_range(0..=255),
+            rng.gen_range(0..=255),
+            rng.gen_range(0..=255),
+        ]);
+
+        for y in rect.min_y..=rect.max_y {
+            for x in rect.min_x..=rect.max_x {
+                if x < width && y < height {
+                    img.put_pixel(x, y, color);
+                }
+            }
+        }
+    }
+
+    img.save(filename).expect("Failed to save image");
+}
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 struct Point2D {
@@ -161,6 +252,7 @@ fn perp(vec: Point2D) -> Point2D {
     }
 }
 
+#[inline(always)]
 fn normalize(vec: Point3D) -> Point3D {
     let length = dot3(vec, vec).sqrt();
     if length != 0.0 {
@@ -186,6 +278,12 @@ struct Triangle3D {
     na: Point3D,
     nb: Point3D,
     nc: Point3D,
+
+    // bounding boxes
+    bb_start_x: u32,
+    bb_start_y: u32,
+    bb_end_x: u32,
+    bb_end_y: u32,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -196,6 +294,7 @@ struct Triangle2D {
 
 #[derive(Debug)]
 struct ScreenSpace {
+    rect: Rect,
     width: u32,     // in pixels
     height: u32,
     size: usize,
@@ -207,6 +306,7 @@ impl ScreenSpace {
     fn new(width: u32, height: u32) -> Self {
         let size_calc = (width * height) as usize;
         Self {
+            rect: Rect { min_x: 0, min_y: 0, max_x: 0, max_y: 0 },
             width,
             height,
             size: size_calc,
@@ -253,7 +353,7 @@ impl ScreenSpace {
         let color: u32 = u32::from_le_bytes([r, g, b, a]); // RGBA as 0xAABBGGRR
         let buf_as_u32: &mut [u32] = cast_slice_mut(&mut self.rgba);
         buf_as_u32.fill(color);
-        self.depth = vec![f32::INFINITY; self.size];
+        self.depth.fill(f32::INFINITY);
     }
         
     pub fn write_bmp(&self, path: &str) -> Result<()> {
@@ -307,19 +407,27 @@ fn signed_triangle_area(t1: Point2D, t2: Point2D, p: Point2D) -> f32 {
     return dot2(ap, t1t2perp) / 2.0;
 }
 
-fn point_in_triangle(a: Point2D, b: Point2D, c: Point2D, p: Point2D, weights: &mut Point3D) -> bool {
+#[inline(always)]
+fn point_in_triangle(a: Point2D, b: Point2D, c: Point2D, p: Point2D, area: f32, inv_area: f32, weights: &mut Point3D) -> bool {
+    
     let area_ab: f32 = signed_triangle_area(a, b, p);
+    if !(area_ab >= 0.0) {return false}
     let area_bc: f32 = signed_triangle_area(b, c, p);
+    if !(area_bc >= 0.0) {return false}
     let area_ca: f32 = signed_triangle_area(c, a, p);
-    let in_tri: bool = area_ab >= 0.0 && area_bc >= 0.0 && area_ca >= 0.0;
+    if !(area_ca >= 0.0) {return false}
+    
+    weights.x = area_bc * inv_area;
+    weights.y = area_ca * inv_area;
+    weights.z = area_ab * inv_area;
 
-    let total_area: f32 = area_ab + area_bc + area_ca;
-    let inv_area_sum: f32 = 1.0 / total_area;
-    weights.x = area_bc * inv_area_sum;
-    weights.y = area_ca * inv_area_sum;
-    weights.z = area_ab * inv_area_sum;
+    return area > 0.0;
+}
 
-    return in_tri && total_area > 0.0;
+#[inline(always)]
+fn inv_triangle_area(a: Point2D, b: Point2D, c: Point2D) -> (f32,f32) {
+    let area = signed_triangle_area(a, b, c);
+    return (area, 1.0 / area);
 }
 
 fn vertex_to_screen(vertex: Point3D, transform: &Transform, resolution: Point2D, fov: f32) -> Point3D {
@@ -331,7 +439,8 @@ fn vertex_to_screen(vertex: Point3D, transform: &Transform, resolution: Point2D,
     let pixels_per_world_unit: f32 = resolution.y / world_height / vertex_world.z;
     let pixel_offset: Point2D = Point2D { x: (vertex_world.x * pixels_per_world_unit), y: (vertex_world.y * pixels_per_world_unit) };
     let vertex_screen: Point2D = resolution / 2.0 + pixel_offset;
-    return Point3D {x: vertex_screen.x, y: vertex_screen.y, z: vertex_world.z};
+    // NOTE z-buffer is inverted!
+    return Point3D {x: vertex_screen.x, y: vertex_screen.y, z: 1.0 / vertex_world.z};
 }
 
 #[derive(Debug)]
@@ -440,7 +549,7 @@ fn fan_triangulate_faces(faces: &[Face], vertices: &[Point3D], texture_coords: &
             let nb: Point3D = vertex_normals[vn_indices[i]];
             let nc: Point3D = vertex_normals[vn_indices[i+1]];
 
-            triangles.push(Triangle3D { a, b, c, ta, tb, tc, na, nb, nc });
+            triangles.push(Triangle3D { a, b, c, ta, tb, tc, na, nb, nc, bb_start_x: 0, bb_start_y: 0, bb_end_x: 0, bb_end_y: 0});
         }
     }
 
@@ -554,10 +663,49 @@ fn shade_pixel(r: u8, g: u8, b: u8, a: u8, normal: Point3D, light: Point3D) -> (
     return (((r as f32) * intensity) as u8, ((g as f32) * intensity) as u8, ((b as f32) * intensity) as u8, a)
 }
 
+/// Compute minimum depth to get at least n rectangles
+fn compute_subdivisions(n: usize) -> u32 {
+    let mut depth = 0;
+    let mut count = 1;
+    while count < n {
+        depth += 1;
+        count *= 2;
+    }
+    depth
+}
 fn main() {
+
     // Multithread this shit later :D
     let cores = num_cpus::get();
     println!("Number of logical CPU cores: {}", cores);
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(cores)
+        .build_global()
+        .unwrap();
+
+    let width = 1920;
+    let height = 1080;
+    let depth = compute_subdivisions(cores);
+    let mut rects = subdivide(width, height,depth);
+    println!("{:?}", rects);
+
+    let mut rect_buffers: Vec<ScreenSpace> = rects
+        .iter()
+        .map(|rect| {
+            ScreenSpace {
+                rect: *rect,
+                width: rect.width(),
+                height: rect.height(),
+                size: (rect.width() * rect.height()) as usize,
+                rgba: vec![0; (rect.width() * rect.height() * 4) as usize],
+                depth: vec![f32::INFINITY; (rect.width() * rect.height()) as usize],
+            }
+        })
+        .collect();
+
+    draw_rectangles(&rects, width, height, "rectangles.png");
+    println!("Saved rectangles.png");
 
 /* 
     let _triangle2 = Triangle3D {
@@ -599,7 +747,7 @@ fn main() {
         .resizable()
         .build();
 
-    r1.set_target_fps(240);
+    r1.set_target_fps(1000);
 
     let mut texture = r1.load_texture_from_image(&thread, &image).expect("raylib texture loading failed");
 
@@ -609,11 +757,14 @@ fn main() {
 
     let mut new_yaw: f32 = 90.0_f32.to_radians();
     let mut new_pitch: f32 = 180.0_f32.to_radians();
-    let mut new_posistion: Point3D = Point3D { x: 0.0, y: 55.0, z: 300.0 };
+    let mut new_posistion: Point3D = Point3D { x: 0.0, y: 55.0, z: 50.0 };
 
     while !r1.window_should_close() {
 
         screen.clear(0,0,0,255);
+        for mut thread_buf in &mut rect_buffers {
+            thread_buf.clear(0,0,0,255);
+        }
 
         let frame_start = Instant::now();
         
@@ -623,87 +774,140 @@ fn main() {
         transformation.update_transform(new_yaw, new_pitch, new_posistion);
 
         let screenspacetriangles: Vec<Triangle3D> = triangles
-            .iter()
-            .map(|tri| Triangle3D {
-                a: vertex_to_screen(tri.a, &transformation, resolution, fov),
-                b: vertex_to_screen(tri.b, &transformation, resolution, fov),
-                c: vertex_to_screen(tri.c, &transformation, resolution, fov),
-                ta: tri.ta,
-                tb: tri.tb,
-                tc: tri.tc,
-                na: tri.na,
-                nb: tri.nb,
-                nc: tri.nc,
+            .par_iter() // parallel iterator instead of .iter()
+            .map(|tri| {
+
+                let sa = vertex_to_screen(tri.a, &transformation, resolution, fov);
+                let sb = vertex_to_screen(tri.b, &transformation, resolution, fov);
+                let sc = vertex_to_screen(tri.c, &transformation, resolution, fov);
+                
+                let min_x = sa.x.min(sb.x).min(sc.x);
+                let min_y = sa.y.min(sb.y).min(sc.y);
+                let max_x = sa.x.max(sb.x).max(sc.x);
+                let max_y = sa.y.max(sb.y).max(sc.y);
+
+                let block_start_x = (min_x.floor() as u32).clamp(0, screen.width as u32 - 1);
+                let block_start_y = (min_y.floor() as u32).clamp(0, screen.height as u32 - 1);
+                let block_end_x = (max_x.ceil() as u32).clamp(0, screen.width as u32 - 1);
+                let block_end_y = (max_y.ceil() as u32).clamp(0, screen.height as u32 - 1);
+            
+                Triangle3D {
+                    a: sa,
+                    b: sb,
+                    c: sc,
+                    ta: tri.ta,
+                    tb: tri.tb,
+                    tc: tri.tc,
+                    na: tri.na,
+                    nb: tri.nb,
+                    nc: tri.nc,
+                    bb_start_x: block_start_x,
+                    bb_start_y: block_start_y,
+                    bb_end_x: block_end_x,
+                    bb_end_y: block_end_y,
+                }
             })
             .collect();
+
+        let transform_time = frame_start.elapsed();
 
         //println!("Converted to screenspace");
 
         // Loop over all pixels and check if inside triangle
-        for (index, tri) in screenspacetriangles.iter().enumerate() {
-            let min_x = tri.a.x.min(tri.b.x).min(tri.c.x);
-            let min_y = tri.a.y.min(tri.b.y).min(tri.c.y);
-            let max_x = tri.a.x.max(tri.b.x).max(tri.c.x);
-            let max_y = tri.a.y.max(tri.b.y).max(tri.c.y);
+        let triangle_start = Instant::now();
+        
+        rect_buffers.par_iter_mut().for_each(|rect_s| {
+            for tri in screenspacetriangles.iter() {
+                let (area, inv_area) = inv_triangle_area(
+                            Point2D { x: tri.a.x, y: tri.a.y }, 
+                            Point2D { x: tri.b.x, y: tri.b.y }, 
+                            Point2D { x: tri.c.x, y: tri.c.y }, 
+                );
+                for y in tri.bb_start_y.max(rect_s.rect.min_y)..tri.bb_end_y.min(rect_s.rect.max_y) {
+                    for x in tri.bb_start_x.max(rect_s.rect.min_x)..tri.bb_end_x.min(rect_s.rect.max_x) {
+                        let p = Point2D {
+                            x: x as f32 + 0.5,
+                            y: y as f32 + 0.5,
+                        };
+                        let mut weights: Point3D = Point3D { x: 0.0, y: 0.0, z: 0.0 };
 
-            let block_start_x = (min_x.floor() as u32).clamp(0, screen.width as u32 - 1);
-            let block_start_y = (min_y.floor() as u32).clamp(0, screen.height as u32 - 1);
-            let block_end_x = (max_x.ceil() as u32).clamp(0, screen.width as u32 - 1);
-            let block_end_y = (max_y.ceil() as u32).clamp(0, screen.height as u32 - 1);
+                        if point_in_triangle(
+                            Point2D { x: tri.a.x, y: tri.a.y }, 
+                            Point2D { x: tri.b.x, y: tri.b.y }, 
+                            Point2D { x: tri.c.x, y: tri.c.y },
+                            p, 
+                            area,
+                            inv_area,
+                            &mut weights
+                        ) {
+                            //println!("{x} {y} {} {}", rect_s.rect.min_x, rect_s.rect.min_y);
 
-            for y in block_start_y..block_end_y {
-                for x in block_start_x..block_end_x {
-                    let p = Point2D {
-                        x: x as f32 + 0.5,
-                        y: y as f32 + 0.5,
-                    };
-                    let mut weights: Point3D = Point3D { x: 0.0, y: 0.0, z: 0.0 };
-                    if point_in_triangle(
-                        Point2D { x: tri.a.x, y: tri.a.y }, 
-                        Point2D { x: tri.b.x, y: tri.b.y }, 
-                        Point2D { x: tri.c.x, y: tri.c.y }, 
-                        p, 
-                        &mut weights
-                    ) {
-                        let depths: Point3D = Point3D { x: tri.a.z, y: tri.b.z, z: tri.c.z };
-                        let depth: f32 = 1.0 / dot3(1.0 / depths, weights);
-                        
-                        if depth > screen.get_depth(x, y) {
-                            continue;
+                            let depths: Point3D = Point3D { x: tri.a.z, y: tri.b.z, z: tri.c.z };
+                            let depth: f32 = 1.0 / dot3(depths, weights);
+                            
+                            if depth > rect_s.get_depth(x-rect_s.rect.min_x, y-rect_s.rect.min_y) {
+                                continue;
+                            }
+
+                            let texture_coord: Point2D = Point2D { 
+                                x: dot3(Point3D { x: tri.ta.x * depths.x, y: tri.tb.x * depths.y, z: tri.tc.x * depths.z }, weights), 
+                                y: dot3(Point3D { x: tri.ta.y * depths.x, y: tri.tb.y * depths.y, z: tri.tc.y * depths.z }, weights),
+                            } * depth;
+
+                            let normal: Point3D = Point3D { 
+                                x: dot3(Point3D { x: tri.na.x * depths.x, y: tri.nb.x * depths.y, z: tri.nc.x * depths.z }, weights), 
+                                y: dot3(Point3D { x: tri.na.y * depths.x, y: tri.nb.y * depths.y, z: tri.nc.y * depths.z }, weights),
+                                z: dot3(Point3D { x: tri.na.z * depths.x, y: tri.nb.z * depths.y, z: tri.nc.z * depths.z }, weights),
+                            } * depth;
+
+                            // let (r,g,b): &(u8, u8, u8) = &triangle_colors[index];
+
+                            rect_s.set_depth(x-rect_s.rect.min_x, y-rect_s.rect.min_y, depth);
+
+                            let show_depth: bool = false;
+                            if show_depth {
+                                let depth_gray: u8 = depth_to_u8(depth);
+                                rect_s.set_pixel(x-rect_s.rect.min_x, y-rect_s.rect.min_y, depth_gray, depth_gray, depth_gray, 255);
+                            } else {
+                                let (r,g,b,a) = obj_texture.sample(texture_coord.x, texture_coord.y);
+                                let (r,g,b,a) = shade_pixel(r, g, b, a, normal, transformation.transform_direction(Point3D { x: -1.0, y: 0.0, z: 0.0 }) );
+                                rect_s.set_pixel(x-rect_s.rect.min_x, y-rect_s.rect.min_y, r, g, b, a);
+                            }
                         }
-
-                        let texture_coord: Point2D = Point2D { 
-                            x: dot3(Point3D { x: tri.ta.x / depths.x, y: tri.tb.x / depths.y, z: tri.tc.x / depths.z }, weights), 
-                            y: dot3(Point3D { x: tri.ta.y / depths.x, y: tri.tb.y / depths.y, z: tri.tc.y / depths.z }, weights),
-                        } * depth;
-
-                        let normal: Point3D = Point3D { 
-                            x: dot3(Point3D { x: tri.na.x / depths.x, y: tri.nb.x / depths.y, z: tri.nc.x / depths.z }, weights), 
-                            y: dot3(Point3D { x: tri.na.y / depths.x, y: tri.nb.y / depths.y, z: tri.nc.y / depths.z }, weights),
-                            z: dot3(Point3D { x: tri.na.z / depths.x, y: tri.nb.z / depths.y, z: tri.nc.z / depths.z }, weights),
-                        } * depth;
-
-                        // let (r,g,b): &(u8, u8, u8) = &triangle_colors[index];
-
-                        screen.set_depth(x, y, depth);
-
-                        let show_depth: bool = false;
-                        if show_depth {
-                            let depth_gray: u8 = depth_to_u8(depth);
-                            screen.set_pixel(x, y, depth_gray, depth_gray, depth_gray, 255);
-                        } else {
-                            let (r,g,b,a) = obj_texture.sample(texture_coord.x, texture_coord.y);
-                            let (r,g,b,a) = shade_pixel(r, g, b, a, normal, transformation.transform_direction(Point3D { x: -1.0, y: 0.0, z: 0.0 }) );
-                            screen.set_pixel(x, y, r, g, b, a);
-                        }
-                        
-                        
                     }
                 }
             }
+        });
+        let triangle_time = triangle_start.elapsed();
+        //println!("Drew pixels");
+
+        let merge_start = Instant::now();
+
+        // Directly copy each rect into the screen buffer
+        for rect_s in &rect_buffers {
+            let rect_width = rect_s.rect.max_x - rect_s.rect.min_x;
+            let rect_height = rect_s.rect.max_y - rect_s.rect.min_y;
+
+            for y in 0..rect_height {
+                let screen_y = rect_s.rect.min_y + y;
+                if screen_y >= screen.height {
+                    continue;
+                }
+
+                let screen_row_start = ((screen_y * screen.width + rect_s.rect.min_x) * 4) as usize;
+                let rect_row_start = (y * rect_width * 4) as usize;
+
+                // Determine the end of the row (clamp to screen width)
+                let row_end = screen_row_start + (rect_width.min(screen.width - rect_s.rect.min_x) * 4) as usize;
+
+                // Copy the row directly into screen.rgba
+                screen.rgba[screen_row_start..row_end]
+                    .copy_from_slice(&rect_s.rgba[rect_row_start..rect_row_start + (row_end - screen_row_start)]);
+            }
         }
 
-        //println!("Drew pixels");
+
+        let merge_time = merge_start.elapsed();
 
         let result = texture.update_texture(&screen.rgba);
         //println!("{result:?}");
@@ -724,7 +928,7 @@ fn main() {
             0.0,
             Color::WHITE
         );
-        d.draw_text(&format!("Frame time: {:.2?}", frame_time), 10, 10, 20, Color::LIME);
+        d.draw_text(&format!("Transform time: {:.2?}\nTriangle time: {:.2?}\nMerge time: {:.2?}\nFrame time: {:.2?}", transform_time, triangle_time, merge_time, frame_time), 10, 10, 20, Color::LIME);
 
         //let _ = screen.write_bmp("yes.bmp");ß
         //println!("Frame time: {:.2?}", frame_time);
