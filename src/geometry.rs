@@ -28,13 +28,13 @@ pub fn point_in_triangle(a: Point2D, b: Point2D, c: Point2D, p: Point2D, area: f
     weights.x = area_bc * inv_area;
     weights.y = area_ca * inv_area;
     weights.z = area_ab * inv_area;
-    return true;
+    true
 }
 
 #[inline(always)]
 pub fn inv_triangle_area(a: Point2D, b: Point2D, c: Point2D) -> (f32,f32) {
     let area = signed_triangle_area(a, b, c);
-    return (area, 1.0 / area);
+    (area, 1.0 / area)
 }
 
 #[inline(always)]

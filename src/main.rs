@@ -1,5 +1,4 @@
 // External crates
-use num_cpus;
 use raylib::prelude::*;
 use rayon::prelude::*;
 
@@ -115,7 +114,7 @@ fn main() {
         let frame_start = std::time::Instant::now();
         
         // TODO create camera control to be able to traverse the scene manually
-        new_yaw = new_yaw + 0.01;
+        new_yaw += 0.01;
         
         let world_height = (fov * 0.5).tan() * 2.0;
         let scaled_inv_world_height = resolution.y / world_height;
@@ -135,10 +134,10 @@ fn main() {
                 let max_x = sa.x.max(sb.x).max(sc.x);
                 let max_y = sa.y.max(sb.y).max(sc.y);
 
-                let block_start_x = (min_x.floor() as u32).clamp(0, screen.width as u32 - 1);
-                let block_start_y = (min_y.floor() as u32).clamp(0, screen.height as u32 - 1);
-                let block_end_x = (max_x.ceil() as u32).clamp(0, screen.width as u32 - 1);
-                let block_end_y = (max_y.ceil() as u32).clamp(0, screen.height as u32 - 1);
+                let block_start_x = (min_x.floor() as u32).clamp(0, screen.width - 1);
+                let block_start_y = (min_y.floor() as u32).clamp(0, screen.height - 1);
+                let block_end_x = (max_x.ceil() as u32).clamp(0, screen.width - 1);
+                let block_end_y = (max_y.ceil() as u32).clamp(0, screen.height - 1);
             
                 Triangle3D {
                     a: sa,
@@ -257,7 +256,7 @@ fn main() {
         d.clear_background(raylib::prelude::Color::BLACK);
         d.draw_texture_pro(
             &texture,
-            raylib::prelude::Rectangle { x: 0.0, y: 0.0, width: resolution.x as f32, height: resolution.y as f32 },
+            raylib::prelude::Rectangle { x: 0.0, y: 0.0, width: resolution.x, height: resolution.y},
             raylib::prelude::Rectangle { x: 0.0, y: 0.0, width: window_width as f32, height: window_height as f32 },
             raylib::prelude::Vector2 { x: 0.0, y: 0.0 },
             0.0,
