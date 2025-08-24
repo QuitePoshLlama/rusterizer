@@ -49,10 +49,12 @@ impl Div<Point3D> for f32 {
     }
 }
 
+#[inline(always)]
 pub fn dot3(a: Point3D, b: Point3D) -> f32 {
     a.x * b.x + a.y * b.y + a.z * b.z
 }
 
+#[inline(always)]
 pub fn normalize(vec: Point3D) -> Point3D {
     let length = dot3(vec, vec).sqrt();
     if length != 0.0 { vec / length } else { vec }

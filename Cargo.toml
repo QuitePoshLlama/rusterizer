@@ -10,3 +10,18 @@ raylib = "5.5.1"
 bytemuck = "1.14"
 image = "0.25"
 num_cpus = "1.15"
+rayon = "1.10"
+
+[profile.release]
+opt-level = 3        # Max optimization
+lto = "fat"          # Link-time optimization across crates
+codegen-units = 1    # Better optimization at the cost of compile time
+panic = "abort"      # Smaller/faster binaries
+debug = false        # Strip debug info
+
+[build]
+rustflags = [
+  "-C", "target-cpu=native",   # Use all CPU features
+  "-C", "inline-threshold=1000", # Aggressive inlining
+  "-C", "unroll-loops",        # Loop unrolling
+]
