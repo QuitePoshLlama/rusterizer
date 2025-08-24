@@ -6,7 +6,10 @@ Currently can load .obj files with textures and apply simple shading using norma
 
 TODO:
 * [x] Modularize code 
-* [ ] Multithreading
+* [x] Multithreading
+* [ ] Find way to multithread unsafe writing to shared buffer
+* [ ] Min-max performance (SIMD)?
+* [ ] Geometry culling?
 * [ ] Adapting to write a GPU shader
 * [ ] Raytracing
 * [ ] Loading/transformming multiple models and arranging scenes

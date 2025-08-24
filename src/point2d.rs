@@ -34,10 +34,12 @@ impl Div<f32> for Point2D {
     }
 }
 
+#[inline(always)]
 pub fn dot2(a: Point2D, b: Point2D) -> f32 {
     a.x * b.x + a.y * b.y
 }
 
+#[inline(always)]
 pub fn perp(vec: Point2D) -> Point2D {
     Point2D { x: vec.y, y: -vec.x }
 }

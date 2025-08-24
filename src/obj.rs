@@ -105,7 +105,7 @@ pub fn fan_triangulate_faces(faces: &[Face], vertices: &[Point3D], texture_coord
             let nb: Point3D = vertex_normals[vn_indices[i]];
             let nc: Point3D = vertex_normals[vn_indices[i+1]];
 
-            triangles.push(Triangle3D { a, b, c, ta, tb, tc, na, nb, nc });
+            triangles.push(Triangle3D { a, b, c, ta, tb, tc, na, nb, nc, bb_start_x: 0, bb_start_y: 0, bb_end_x: 0, bb_end_y: 0 });
         }
     }
 
