@@ -14,6 +14,9 @@ impl Rect {
     pub fn height(&self) -> u32 {
         self.max_y - self.min_y
     }
+    pub fn is_visible(&self, screen_width: u32, screen_height: u32) -> bool {
+        !(self.max_x < 1 || self.min_x > screen_width || self.max_y < 1 || self.min_y > screen_height)
+    }
 }
 
 // Compute minimum depth to get at least n rectangles for # of CPU cores

@@ -97,8 +97,11 @@ pub fn subdivide(width: u32, height: u32, depth: u32) -> Vec<Rect> {
 pub fn draw_rectangles(rects: &[Rect], width: u32, height: u32, filename: &str) {
     let mut img = RgbImage::new(width, height);
     let mut rng = rand::thread_rng();
-
-    for rect in rects {
+    let visible_rects: Vec<_> = rects
+        .iter()
+        .filter(|rect| rect.is_visible(width, height))
+        .collect();
+    for rect in visible_rects {
         let color = Rgb([
             rng.gen_range(0..=255),
             rng.gen_range(0..=255),
