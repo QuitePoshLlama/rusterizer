@@ -3,10 +3,11 @@ use std::fs::File;
 use std::io::{Write, BufWriter};
 use anyhow::Result;
 
+use crate::rectangle::Rect;
 pub struct ScreenSpace {
+    pub rect: Rect,
     pub width: u32,
     pub height: u32,
-    pub size: usize,
     pub rgba: Vec<u8>,
     pub depth: Vec<f32>,
 }
@@ -15,9 +16,9 @@ impl ScreenSpace {
     pub fn new(width: u32, height: u32) -> Self {
         let size_calc = (width * height) as usize;
         Self {
+            rect: Rect { min_x: 0, min_y: 0, max_x: 0, max_y: 0 },
             width,
             height,
-            size: size_calc,
             rgba: vec![0; size_calc * 4],
             depth: vec![f32::INFINITY; size_calc],
         }
@@ -47,7 +48,7 @@ impl ScreenSpace {
         let color: u32 = u32::from_le_bytes([r, g, b, a]);
         let buf_as_u32: &mut [u32] = cast_slice_mut(&mut self.rgba);
         buf_as_u32.fill(color);
-        self.depth = vec![f32::INFINITY; self.size];
+        self.depth.fill(f32::INFINITY);
     }
     pub fn write_bmp(&self, path: &str) -> Result<()> {
         let width = self.width;

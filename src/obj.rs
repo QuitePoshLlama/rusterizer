@@ -68,7 +68,7 @@ pub fn parse_obj(path: &str) -> Result<(Vec<Point3D>, Vec<Point2D>, Vec<Point3D>
 
 fn parse_face_vertex(s: &str) -> Result<(usize, Option<usize>, Option<usize>)> {
     let parts: Vec<&str> = s.split('/').collect();
-    let v = parts.get(0).ok_or_else(|| anyhow!("Missing vertex index"))?.parse::<usize>()? - 1;
+    let v = parts.first().ok_or_else(|| anyhow!("Missing vertex index"))?.parse::<usize>()? - 1;
     let vt = match parts.get(1) {
         Some(&"") | None => None,
         Some(s) => Some(s.parse::<usize>()? - 1),
@@ -105,9 +105,8 @@ pub fn fan_triangulate_faces(faces: &[Face], vertices: &[Point3D], texture_coord
             let nb: Point3D = vertex_normals[vn_indices[i]];
             let nc: Point3D = vertex_normals[vn_indices[i+1]];
 
-            triangles.push(Triangle3D { a, b, c, ta, tb, tc, na, nb, nc });
+            triangles.push(Triangle3D { a, b, c, ta, tb, tc, na, nb, nc, bb_start_x: 0, bb_start_y: 0, bb_end_x: 0, bb_end_y: 0 });
         }
     }
-
-    return triangles
+    triangles
 }
