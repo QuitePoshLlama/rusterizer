@@ -29,7 +29,7 @@ fn depth_to_u8(depth: f32) -> u8 {
         if depth <= 0.0 {
                 return 255
         }
-        let y = 255.0 * ((-depth / 10.0) + 1.0).exp();
+        let y = 255.0 * ((-depth /10.0 / 10.0) + 1.0).exp();
         y.round().clamp(0.0, 255.0) as u8
 }
 
@@ -102,10 +102,36 @@ fn main() {
     let mut transformation = transform::Transform { yaw: 0.0, pitch: 0.0, posistion: point3d::Point3D { x: 0.0, y: 0.0, z: 0.0 } };
     let mut new_yaw: f32 = 90.0_f32.to_radians();
     let new_pitch: f32 = 180.0_f32.to_radians();
-    let new_posistion = point3d::Point3D { x: 0.0, y: 55.0, z: 300.0 };
+    let mut new_posistion = point3d::Point3D { x: 0.0, y: 55.0, z: 300.0 };
+    let camera_velocity = 1.0;
 
     while !r1.window_should_close() {
-            
+
+        // Add movement
+        if r1.is_key_down(KeyboardKey::KEY_W) {
+            new_posistion.z -= camera_velocity;
+        }
+
+        if r1.is_key_down(KeyboardKey::KEY_A) {
+            new_posistion.x += camera_velocity;
+        }
+
+        if r1.is_key_down(KeyboardKey::KEY_S) {
+            new_posistion.z += camera_velocity;
+        }
+
+        if r1.is_key_down(KeyboardKey::KEY_D) {
+            new_posistion.x -= camera_velocity;
+        }
+
+        if r1.is_key_down(KeyboardKey::KEY_SPACE) {
+            new_posistion.y += camera_velocity;
+        }
+
+        if r1.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) {
+            new_posistion.y -= camera_velocity;
+        }
+                    
         // Clear buffers each frame
         for thread_buf in &mut rect_buffers {
             thread_buf.clear(0,0,0,255);
