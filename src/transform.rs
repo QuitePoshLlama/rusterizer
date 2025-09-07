@@ -28,10 +28,25 @@ impl Transform {
         let khat = transform_vector(ihat_yaw, jhat_yaw, khat_yaw, khat_pitch);
         (ihat, jhat, khat)
     }
+
+    pub fn get_inverse_basis_vectors(&self) -> (Point3D, Point3D, Point3D) {
+        let (ihat, jhat, khat) = self.get_basis_vectors();
+        let inv_ihat = Point3D{x: ihat.x, y: jhat.x, z: khat.x};
+        let inv_jhat = Point3D{x: ihat.y, y: jhat.y, z: khat.y};
+        let inv_khat = Point3D{x: ihat.z, y: jhat.z, z: khat.z};
+        (inv_ihat, inv_jhat, inv_khat)
+    }
+
     pub fn to_world_point(&self, point: Point3D) -> Point3D {
         let (ihat, jhat, khat) = self.get_basis_vectors();
         transform_vector(ihat, jhat, khat, point) + self.posistion
     }
+
+    pub fn to_local_point(&self, worldpoint: Point3D) -> Point3D {
+        let (ihat, jhat, khat) = self.get_inverse_basis_vectors();
+        transform_vector(ihat, jhat, khat, worldpoint - self.posistion)
+    }
+
     pub fn transform_direction(&self, dir: Point3D) -> Point3D {
         let (ihat, jhat, khat) = self.get_basis_vectors();
         transform_vector(ihat, jhat, khat, dir)

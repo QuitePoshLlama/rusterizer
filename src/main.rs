@@ -15,6 +15,7 @@ mod texture;
 mod geometry;
 mod obj;
 mod rectangle;
+mod camera;
 
 // Internal imports
 use crate::rectangle::compute_subdivisions;
@@ -23,6 +24,7 @@ use crate::geometry::{draw_rectangles, vertex_to_screen, inv_triangle_area, poin
 use crate::triangle::Triangle3D;
 use crate::point2d::Point2D;
 use crate::point3d::{Point3D, dot3};
+use crate::camera::Camera;
 
 
 fn depth_to_u8(depth: f32) -> u8 {
@@ -97,15 +99,19 @@ fn main() {
     r1.set_target_fps(240);
     let mut texture = r1.load_texture_from_image(&thread, &image).expect("raylib texture loading failed");
     
-    // Initial conditions for camera
-    let fov: f32 = 30.0_f32.to_radians();
+    // Initial conditions for objects
     let mut transformation = transform::Transform { yaw: 0.0, pitch: 0.0, posistion: point3d::Point3D { x: 0.0, y: 0.0, z: 0.0 } };
     let mut new_yaw: f32 = 90.0_f32.to_radians();
     let new_pitch: f32 = 180.0_f32.to_radians();
-    let new_posistion = point3d::Point3D { x: 0.0, y: 55.0, z: 300.0 };
+    let mut new_posistion = point3d::Point3D { x: 0.0, y: 55.0, z: 300.0 };
+    
+    // Initial conditions for camera
+    let mut cam: Camera = Camera { fov: 30.0_f32.to_radians(), camera_speed: 1.0, mouse_sensitivity: 0.002, transform: transform::Transform { yaw: 0.0, pitch: 0.0, posistion: point3d::Point3D { x: 0.0, y: 0.0, z: 0.0 }} };
 
     while !r1.window_should_close() {
-            
+
+        cam.camera_update(&r1);
+                    
         // Clear buffers each frame
         for thread_buf in &mut rect_buffers {
             thread_buf.clear(0,0,0,255);
@@ -113,10 +119,9 @@ fn main() {
 
         let frame_start = std::time::Instant::now();
         
-        // TODO create camera control to be able to traverse the scene manually
         new_yaw += 0.01;
         
-        let world_height = (fov * 0.5).tan() * 2.0;
+        let world_height = (cam.fov * 0.5).tan() * 2.0;
         let scaled_inv_world_height = resolution.y / world_height;
 
         transformation.update_transform(new_yaw, new_pitch, new_posistion);
@@ -125,10 +130,10 @@ fn main() {
             .par_iter() // parallel iterator instead of .iter()
             .map(|tri| {
 
-                let sa = vertex_to_screen(tri.a, &transformation, resolution, scaled_inv_world_height);
-                let sb = vertex_to_screen(tri.b, &transformation, resolution, scaled_inv_world_height);
-                let sc = vertex_to_screen(tri.c, &transformation, resolution, scaled_inv_world_height);
-                
+                let sa = vertex_to_screen(tri.a, &transformation, &cam, resolution, scaled_inv_world_height);
+                let sb = vertex_to_screen(tri.b, &transformation, &cam, resolution, scaled_inv_world_height);
+                let sc = vertex_to_screen(tri.c, &transformation, &cam, resolution, scaled_inv_world_height);
+
                 let min_x = sa.x.min(sb.x).min(sc.x);
                 let min_y = sa.y.min(sb.y).min(sc.y);
                 let max_x = sa.x.max(sb.x).max(sc.x);
@@ -138,7 +143,7 @@ fn main() {
                 let block_start_y = (min_y.floor() as u32).clamp(0, screen.height - 1);
                 let block_end_x = (max_x.ceil() as u32).clamp(0, screen.width - 1);
                 let block_end_y = (max_y.ceil() as u32).clamp(0, screen.height - 1);
-            
+
                 Triangle3D {
                     a: sa,
                     b: sb,

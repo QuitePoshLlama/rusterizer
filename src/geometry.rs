@@ -6,6 +6,7 @@ use crate::point2d::{Point2D, perp, dot2};
 use crate::point3d::Point3D;
 use crate::transform::Transform;
 use crate::rectangle::Rect;
+use crate::camera::Camera;
 
 pub fn signed_triangle_area(t1: Point2D, t2: Point2D, p: Point2D) -> f32 {
     let ap = p - t1;
@@ -38,16 +39,17 @@ pub fn inv_triangle_area(a: Point2D, b: Point2D, c: Point2D) -> (f32,f32) {
 }
 
 #[inline(always)]
-pub fn vertex_to_screen(vertex: Point3D, transform: &Transform, resolution: Point2D, scaled_inv_world_height: f32) -> Point3D {
+pub fn vertex_to_screen(vertex: Point3D, transform: &Transform, camera: &Camera, resolution: Point2D, scaled_inv_world_height: f32) -> Point3D {
     
     let vertex_world: Point3D = transform.to_world_point(vertex);
-    let z_inverted = 1.0 / vertex_world.z;
+    let vertex_view: Point3D = camera.transform.to_local_point(vertex_world);
+    let z_inverted = 1.0 / vertex_view.z;
     
     let pixels_per_world_unit: f32 = scaled_inv_world_height * z_inverted;
 
     // Apply scaling and shift to center screen (mul add for perf)
-    let screen_x = (vertex_world.x * pixels_per_world_unit).mul_add(1.0, resolution.x * 0.5);
-    let screen_y = (vertex_world.y * pixels_per_world_unit).mul_add(1.0, resolution.y * 0.5);
+    let screen_x = (vertex_view.x * pixels_per_world_unit).mul_add(1.0, resolution.x * 0.5);
+    let screen_y = (vertex_view.y * pixels_per_world_unit).mul_add(1.0, resolution.y * 0.5);
     
     // z-buffer is pre-inverted for performance
     Point3D { x: screen_x, y: screen_y, z: z_inverted }
@@ -93,7 +95,7 @@ pub fn subdivide(width: u32, height: u32, depth: u32) -> Vec<Rect> {
     rects
 }
 
-/// Save rectangles to an image file to represent areas of screen rendered by individual threads later
+/// Save rectangles to an image file to represent areas of screen rendered by individual threads later (NOT USED IN RENDERING PIPELINE)
 pub fn draw_rectangles(rects: &[Rect], width: u32, height: u32, filename: &str) {
     let mut img = RgbImage::new(width, height);
     let mut rng = rand::thread_rng();

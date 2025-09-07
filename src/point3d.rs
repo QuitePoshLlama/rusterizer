@@ -5,7 +5,7 @@ pub struct Point3D {
     pub z: f32,
 }
 
-use std::ops::{Add, Sub, Mul, Div};
+use std::ops::{Add, Sub, Mul, Div, AddAssign, SubAssign};
 
 impl Add for Point3D {
     type Output = Point3D;
@@ -21,10 +21,28 @@ impl Add<f32> for Point3D {
     }
 }
 
+// AddAssign (for +=)
+impl AddAssign for Point3D {
+    fn add_assign(&mut self, rhs: Point3D) {
+        self.x += rhs.x;
+        self.y += rhs.y;
+        self.z += rhs.z;
+    }
+}
+
 impl Sub for Point3D {
     type Output = Point3D;
     fn sub(self, other: Point3D) -> Point3D {
         Point3D { x: self.x - other.x, y: self.y - other.y, z: self.z - other.z }
+    }
+}
+
+// SubAssign (for -=)
+impl SubAssign for Point3D {
+    fn sub_assign(&mut self, rhs: Point3D) {
+        self.x -= rhs.x;
+        self.y -= rhs.y;
+        self.z -= rhs.z;
     }
 }
 
