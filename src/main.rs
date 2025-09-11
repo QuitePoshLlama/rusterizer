@@ -160,8 +160,17 @@ fn main() {
                     bb_end_y: block_end_y,
                 }
             })
+            .filter(|tri| {
+                let (w, h) = (screen.width as f32, screen.height as f32);
+                let xs = [tri.a.x, tri.b.x, tri.c.x];
+                let ys = [tri.a.y, tri.b.y, tri.c.y];
+
+                !(xs.iter().all(|&x| x < 0.0)   // all left
+                || xs.iter().all(|&x| x > w)    // all right
+                || ys.iter().all(|&y| y < 0.0)  // all above
+                || ys.iter().all(|&y| y > h))   // all below
+            })
             .collect();
-        
         let transform_time = frame_start.elapsed();
         let triangle_start = Instant::now();
         
