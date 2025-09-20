@@ -1,10 +1,12 @@
 // External crates
 use raylib::prelude::*;
 use rayon::prelude::*;
+use plotters::prelude::*;
+use plotters::style::Color;
 
 // STD library
 use std::time::Instant;
-
+use std::path::Path;
 // Internal modules
 mod point2d;
 mod point3d;
@@ -108,7 +110,16 @@ fn main() {
     // Initial conditions for camera
     let mut cam: Camera = Camera { fov: 30.0_f32.to_radians(), camera_speed: 1.0, mouse_sensitivity: 0.002, transform: transform::Transform { yaw: 0.0, pitch: 0.0, posistion: point3d::Point3D { x: 0.0, y: 0.0, z: 0.0 }} };
 
+    // Vectors to store timing metrics
+    let mut transform_times: Vec<f64> = Vec::new();
+    let mut triangle_times: Vec<f64> = Vec::new();
+    let mut merge_times: Vec<f64> = Vec::new();
+    let mut frame_times: Vec<f64> = Vec::new();
+
     while !r1.window_should_close() {
+        if r1.is_key_pressed(raylib::consts::KeyboardKey::KEY_ESCAPE) {
+            break;
+        }
 
         cam.camera_update(&r1);
                     
@@ -257,6 +268,13 @@ fn main() {
         let window_width = r1.get_screen_width();
         let window_height = r1.get_screen_height();
         let frame_time = frame_start.elapsed();
+
+        // Collect timing data
+        transform_times.push(transform_time.as_micros() as f64);
+        triangle_times.push(triangle_time.as_micros() as f64);
+        merge_times.push(merge_time.as_micros() as f64);
+        frame_times.push(frame_time.as_micros() as f64);
+
         let mut d = r1.begin_drawing(&thread);
         d.clear_background(raylib::prelude::Color::BLACK);
         d.draw_texture_pro(
@@ -268,6 +286,68 @@ fn main() {
             raylib::prelude::Color::WHITE
         );
         // Perf stats
-        d.draw_text(&format!("Transform time: {:.2?}\nTriangle time: {:.2?}\nMerge time: {:.2?}\nFrame time: {:.2?}", transform_time, triangle_time, merge_time, frame_time), 10, 10, 20, Color::LIME);
+        d.draw_text(&format!("Transform time: {:.2?}\nTriangle time: {:.2?}\nMerge time: {:.2?}\nFrame time: {:.2?}", transform_time, triangle_time, merge_time, frame_time), 10, 10, 20, raylib::prelude::Color::LIME);
     }
+    use std::env;
+    let current_dir = env::current_dir().unwrap();
+    plot_all_metrics(&transform_times, &triangle_times, &merge_times, &frame_times, &current_dir.join("performance_metrics.png")).unwrap();
+}
+
+fn plot_all_metrics(
+    transform_times: &Vec<f64>,
+    triangle_times: &Vec<f64>,
+    merge_times: &Vec<f64>,
+    frame_times: &Vec<f64>,
+    filename: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if transform_times.is_empty() {
+        return Err("No data to plot".into());
+    }
+
+    let max_time = [transform_times, triangle_times, merge_times, frame_times]
+        .iter()
+        .flat_map(|v| v.iter())
+        .fold(0.0f64, |acc, &x| acc.max(x));
+
+    let root = BitMapBackend::new(filename.to_str().unwrap(), (1200, 800)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Performance Metrics Over Time", ("sans-serif", 30))
+        .margin(50)
+        .x_label_area_size(40)
+        .y_label_area_size(60)
+        .build_cartesian_2d(0..(transform_times.len() as i32), 0.0..max_time)?;
+
+    chart
+        .configure_mesh()
+        .x_desc("Frame")
+        .y_desc("Time (μs)")
+        .draw()?;
+
+    let series_data = [
+        (transform_times, &BLUE, "Transform"),
+        (triangle_times, &RED, "Triangle"),
+        (merge_times, &GREEN, "Merge"),
+        (frame_times, &MAGENTA, "Frame"),
+    ];
+
+    for (times, color, label) in series_data {
+        chart
+            .draw_series(LineSeries::new(
+                times.iter().enumerate().map(|(i, &v)| (i as i32, v)),
+                color,
+            ))?
+            .label(label)
+            .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 10, y)], color));
+    }
+
+    chart
+        .configure_series_labels()
+        .background_style(&RGBAColor(255, 255, 255, 0.8))
+        .border_style(&BLACK)
+        .draw()?;
+
+    println!("Successfully saved {}", filename.display());
+    Ok(())
 }

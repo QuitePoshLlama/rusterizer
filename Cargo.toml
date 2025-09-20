@@ -11,6 +11,7 @@ bytemuck = "1.14"
 image = "0.25"
 num_cpus = "1.15"
 rayon = "1.10"
+plotters = "0.3"
 
 [profile.release]
 opt-level = 3        # Max optimization
