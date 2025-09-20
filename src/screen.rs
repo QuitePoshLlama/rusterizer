@@ -2,6 +2,9 @@ use bytemuck::cast_slice_mut;
 use std::fs::File;
 use std::io::{Write, BufWriter};
 use anyhow::Result;
+use std::simd::f32x4;
+use std::simd::Mask;
+use std::simd::u8x4;
 
 use crate::rectangle::Rect;
 pub struct ScreenSpace {
@@ -31,6 +34,42 @@ impl ScreenSpace {
         self.rgba[i + 2] = blue;
         self.rgba[i + 3] = alpha;
     }
+    pub fn set_pixel_quad(
+        &mut self,
+        x: u32,
+        y: u32,
+        r: u8x4,
+        g: u8x4,
+        b: u8x4,
+        a: u8x4,
+        mask: Mask<i32, 4>,
+    ) {
+        let base = (y * self.width + x) as usize;
+        let base_row_down = ((y+1) * self.width + x) as usize;
+        let rr = r.to_array();
+        let gg = g.to_array();
+        let bb = b.to_array();
+        let aa = a.to_array();
+
+        for lane in 0..2 {
+            if mask.test(lane) {
+                let idx = (base + lane) * 4;
+                self.rgba[idx + 0] = rr[lane];
+                self.rgba[idx + 1] = gg[lane];
+                self.rgba[idx + 2] = bb[lane];
+                self.rgba[idx + 3] = aa[lane];
+            }
+        }
+        for lane in 2..4 {
+            if mask.test(lane) {
+                let idx = (base_row_down + lane - 2) * 4;
+                self.rgba[idx + 0] = rr[lane];
+                self.rgba[idx + 1] = gg[lane];
+                self.rgba[idx + 2] = bb[lane];
+                self.rgba[idx + 3] = aa[lane];
+            }
+        }
+    }
     pub fn get_pixel(&self, x: u32, y: u32) -> Option<(u8, u8, u8, u8)> {
         if x >= self.width || y >= self.height { return None }
         let i = ((y * self.width + x) * 4) as usize;
@@ -40,9 +79,35 @@ impl ScreenSpace {
         let i = (y * self.width + x) as usize;
         self.depth[i] = value;
     }
+    pub fn set_depth_quad(&mut self, x: u32, y: u32, depth: f32x4, mask: Mask<i32, 4>) {
+        let base = (y * self.width + x) as usize;
+        let base_row_down = ((y+1) * self.width + x) as usize;
+        let arr = depth.to_array();
+        for lane in 0..2 {
+            if mask.test(lane) {
+                self.depth[base + lane] = arr[lane];
+            }
+        }
+        for lane in 2..4 {
+            if mask.test(lane) {
+                self.depth[base_row_down + lane - 2] = arr[lane];
+            }
+        }
+    }
     pub fn get_depth(&self, x: u32, y: u32) -> f32 {
         let i = (y * self.width + x) as usize;
         self.depth[i]
+    }
+    pub fn get_depth_quad(&self, x: u32, y: u32) -> f32x4 {
+        // load 4 contiguous depths in a row
+        let base = (y * self.width + x) as usize;
+        let base_row_down = ((y+1) * self.width + x) as usize;
+        f32x4::from_array([
+            self.depth[base],
+            self.depth[base + 1],
+            self.depth[base_row_down],
+            self.depth[base_row_down + 1],
+        ])
     }
     pub fn clear(&mut self, r: u8, g: u8, b: u8, a: u8) {
         let color: u32 = u32::from_le_bytes([r, g, b, a]);

@@ -1,17 +1,28 @@
 use image::RgbImage;
 use rand::Rng;
 use image::Rgb;
+use std::simd::f32x4;
+use std::simd::cmp::SimdPartialOrd;
+use std::simd::Mask;
 
-use crate::point2d::{Point2D, perp, dot2};
-use crate::point3d::Point3D;
+use crate::point2d::{dot2, dot2_simd, perp, perp_simd, Point2D, Point2Dx4};
+use crate::point3d::{Point3D,Point3Dx4};
 use crate::transform::Transform;
 use crate::rectangle::Rect;
 use crate::camera::Camera;
 
+#[inline(always)]
 pub fn signed_triangle_area(t1: Point2D, t2: Point2D, p: Point2D) -> f32 {
     let ap = p - t1;
     let t1t2perp: Point2D = perp(t2 - t1);
     dot2(ap, t1t2perp) / 2.0
+}
+
+#[inline(always)]
+pub fn signed_triangle_area_simd(t1: Point2Dx4, t2: Point2Dx4, p: Point2Dx4) -> f32x4 {
+    let ap = p - t1;
+    let t1t2perp: Point2Dx4 = perp_simd(t2 - t1);
+    dot2_simd(ap, t1t2perp) / f32x4::from_array([2.0,2.0,2.0,2.0])
 }
 
 #[inline(always)]
@@ -33,9 +44,39 @@ pub fn point_in_triangle(a: Point2D, b: Point2D, c: Point2D, p: Point2D, area: f
 }
 
 #[inline(always)]
+pub fn point_in_triangle_simd(a: Point2Dx4, b: Point2Dx4, c: Point2Dx4, p: Point2Dx4, area: f32x4, inv_area: f32x4, weights: &mut Point3Dx4) -> Mask<i32, 4> {
+    // Fail fast on any step
+    let area_ab: f32x4 = signed_triangle_area_simd(a, b, p);
+    let area_bc: f32x4 = signed_triangle_area_simd(b, c, p);
+    let area_ca: f32x4 = signed_triangle_area_simd(c, a, p);
+
+    // Use pre-computed area/inverse once per triangle
+    // Make sure triangle area is valid (> 0 in all lanes)
+    let valid_area = area.simd_gt(f32x4::splat(0.0));
+    // Only compute weights if all checks pass
+    weights.x = area_bc * inv_area;
+    weights.y = area_ca * inv_area;
+    weights.z = area_ab * inv_area;
+    
+    let inside = area_ab.simd_ge(f32x4::splat(0.0))
+        & area_bc.simd_ge(f32x4::splat(0.0))
+        & area_ca.simd_ge(f32x4::splat(0.0));  
+    
+    valid_area & inside
+}
+
+#[inline(always)]
 pub fn inv_triangle_area(a: Point2D, b: Point2D, c: Point2D) -> (f32,f32) {
     let area = signed_triangle_area(a, b, c);
     (area, 1.0 / area)
+}
+
+#[inline(always)]
+pub fn inv_triangle_area_simd(a: Point2Dx4, b: Point2Dx4, c: Point2Dx4) -> (f32x4, f32x4) {
+    let area: f32x4 = signed_triangle_area_simd(a, b, c);
+    // Reciprocal (with division by zero protection if you want it)
+    let inv_area = f32x4::splat(1.0) / area;
+    (area, inv_area)
 }
 
 #[inline(always)]
@@ -55,7 +96,8 @@ pub fn vertex_to_screen(vertex: Point3D, transform: &Transform, camera: &Camera,
     Point3D { x: screen_x, y: screen_y, z: z_inverted }
 }
 
-/// Subdivide a rectangle evenly with given depth
+/// Subdivide a rectangle evenly with given depth,
+/// but stop subdividing if any rectangle has odd dimensions.
 pub fn subdivide(width: u32, height: u32, depth: u32) -> Vec<Rect> {
     let mut rects = Vec::new();
 
@@ -66,15 +108,15 @@ pub fn subdivide(width: u32, height: u32, depth: u32) -> Vec<Rect> {
         max_y: height,
     };
 
-    // Alternate spliting the screen vertically and horizontally
     fn recurse(r: Rect, vertical: bool, depth: u32, rects: &mut Vec<Rect>) {
-        if depth == 0 {
+        let w = r.max_x - r.min_x;
+        let h = r.max_y - r.min_y;
+
+        // stop if depth reached OR odd dimensions
+        if depth == 0 || w % 2 != 0 || h % 2 != 0 {
             rects.push(r);
             return;
         }
-
-        let w = r.max_x - r.min_x;
-        let h = r.max_y - r.min_y;
 
         if vertical {
             let mid = r.min_x + w / 2;
