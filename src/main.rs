@@ -7,7 +7,10 @@ use plotters::prelude::*;
 use plotters::style::Color;
 
 use std::simd::cmp::SimdPartialOrd;
+use std::simd::num::SimdFloat;
 use std::simd::{f32x4, u8x4};
+use std::simd::{Simd, StdFloat, usizex4};
+
 // STD library
 use std::time::Instant;
 use std::path::Path;
@@ -47,31 +50,49 @@ fn shade_pixel(r: u8, g: u8, b: u8, a: u8, normal: point3d::Point3D, light: poin
         (((r as f32) * intensity) as u8, ((g as f32) * intensity) as u8, ((b as f32) * intensity) as u8, a)
 }
 
-pub fn shade_quad(
-    r: u8x4,
-    g: u8x4,
-    b: u8x4,
-    a: u8x4,
+pub fn shade_quad_test(
+    r: f32x4,
+    g: f32x4,
+    b: f32x4,
+    a: f32x4,
     normal: Point3Dx4,
-    light_dir: Point3D,
+    light: Point3D,
 ) -> (u8x4, u8x4, u8x4, u8x4) {
-    let mut rr = [0; 4];
-    let mut gg = [0; 4];
-    let mut bb = [0; 4];
-    let mut aa = [0; 4];
+    let mut rr = [0u8; 4];
+    let mut gg = [0u8; 4];
+    let mut bb = [0u8; 4];
+    let mut aa = [0u8; 4];
+
     for lane in 0..4 {
-        let n = Point3D {
-            x: normal.x[lane],
-            y: normal.y[lane],
-            z: normal.z[lane],
-        };
-        let (r2, g2, b2, a2) = shade_pixel(r[lane], g[lane], b[lane], a[lane], n, light_dir);
-        rr[lane] = r2;
-        gg[lane] = g2;
-        bb[lane] = b2;
-        aa[lane] = a2;
+        let (sr, sg, sb, sa) = shade_pixel(
+            r[lane] as u8,
+            g[lane] as u8,
+            b[lane] as u8,
+            a[lane] as u8,
+            Point3D { x: (normal.x[lane]), y: (normal.y[lane]), z: (normal.z[lane]) },
+            light,
+        );
+        rr[lane] = sr;
+        gg[lane] = sg;
+        bb[lane] = sb;
+        aa[lane] = sa;
     }
+
     (u8x4::from_array(rr), u8x4::from_array(gg), u8x4::from_array(bb), u8x4::from_array(aa))
+}
+
+fn shade_quad(r: f32x4, g: f32x4, b: f32x4, a: f32x4, normal: Point3Dx4, light: Point3D) -> (u8x4, u8x4, u8x4, u8x4) {
+        let normalized_normal = point3d::normalize_simd(normal); //unit vector
+        let normalized_light = point3d::normalize_simd(Point3Dx4 { x: Simd::splat(light.x), y: Simd::splat(light.y), z: Simd::splat(light.z) });
+        let intensity = (dot3_simd(normalized_normal, normalized_light) + f32x4::splat(1.0)) * f32x4::splat(0.5);
+
+        // scale and clamp to 0..255
+        let r_shaded = (r * intensity).cast::<u8>();
+        let g_shaded = (g * intensity).cast::<u8>();
+        let b_shaded = (b * intensity).cast::<u8>();
+        let a_shaded = a.cast::<u8>();
+        //println!("{r_shaded:?},{g_shaded:?},{b_shaded:?},{a_shaded:?}");
+        (r_shaded, g_shaded, b_shaded, a_shaded)
 }
 
 fn main() {
@@ -145,12 +166,15 @@ fn main() {
     let mut transform_times: Vec<f64> = Vec::new();
     let mut triangle_times: Vec<f64> = Vec::new();
     let mut merge_times: Vec<f64> = Vec::new();
+    let mut raylib_times: Vec<f64> = Vec::new();
     let mut frame_times: Vec<f64> = Vec::new();
 
     while !r1.window_should_close() {
         if r1.is_key_pressed(raylib::consts::KeyboardKey::KEY_ESCAPE) {
             break;
         }
+        
+        let frame_start = std::time::Instant::now();
 
         cam.camera_update(&r1);
                     
@@ -158,8 +182,6 @@ fn main() {
         for thread_buf in &mut rect_buffers {
             thread_buf.clear(0,0,0,255);
         }
-
-        let frame_start = std::time::Instant::now();
         
         //new_yaw += 0.01;
         
@@ -209,7 +231,7 @@ fn main() {
         let triangle_start = Instant::now();
         
         // Look into alternatives that let us use unsafe buffer access accross threeads since we can guarantee no collisions
-        rect_buffers.par_iter_mut().for_each(|rect_s| {
+        rect_buffers.iter_mut().for_each(|rect_s| {
             for tri in screenspacetriangles.iter() {
                 let (area, inv_area) = inv_triangle_area(
                     Point2D { x: tri.a.x, y: tri.a.y }, 
@@ -290,18 +312,13 @@ fn main() {
         }
         let merge_time = merge_start.elapsed();
 
+        let raylib_overhead = Instant::now();
         // Put it in a window!
         let result = texture.update_texture(&screen.rgba);
         //println!("{result:?}");
         let window_width = r1.get_screen_width();
         let window_height = r1.get_screen_height();
-        let frame_time = frame_start.elapsed();
 
-        // Collect timing data
-        transform_times.push(transform_time.as_micros() as f64);
-        triangle_times.push(triangle_time.as_micros() as f64);
-        merge_times.push(merge_time.as_micros() as f64);
-        frame_times.push(frame_time.as_micros() as f64);
 
         let mut d = r1.begin_drawing(&thread);
         d.clear_background(raylib::prelude::Color::BLACK);
@@ -314,17 +331,27 @@ fn main() {
             raylib::prelude::Color::WHITE
         );
         // Perf stats
-        d.draw_text(&format!("Transform time: {:.2?}\nTriangle time: {:.2?}\nMerge time: {:.2?}\nFrame time: {:.2?}", transform_time, triangle_time, merge_time, frame_time), 10, 10, 20, raylib::prelude::Color::LIME);
+        let raylib_time = raylib_overhead.elapsed();
+        let frame_time = frame_start.elapsed();
+
+        // Collect timing data
+        transform_times.push(transform_time.as_micros() as f64);
+        triangle_times.push(triangle_time.as_micros() as f64);
+        merge_times.push(merge_time.as_micros() as f64);
+        raylib_times.push(raylib_time.as_micros() as f64);
+        frame_times.push(frame_time.as_micros() as f64);
+        d.draw_text(&format!("Transform time: {:.2?}\nTriangle time: {:.2?}\nMerge time: {:.2?}\nRaylib time: {:.2?}\nFrame time: {:.2?}", transform_time, triangle_time, merge_time, raylib_time, frame_time), 10, 10, 20, raylib::prelude::Color::LIME);
     }
     use std::env;
     let current_dir = env::current_dir().unwrap();
-    plot_all_metrics(&transform_times, &triangle_times, &merge_times, &frame_times, &current_dir.join("performance_metrics.png")).unwrap();
+    plot_all_metrics(&transform_times, &triangle_times, &merge_times, &raylib_times, &frame_times, &current_dir.join("performance_metrics.png")).unwrap();
 }
 
 fn plot_all_metrics(
     transform_times: &Vec<f64>,
     triangle_times: &Vec<f64>,
     merge_times: &Vec<f64>,
+    raylib_times: &Vec<f64>,
     frame_times: &Vec<f64>,
     filename: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -357,6 +384,7 @@ fn plot_all_metrics(
         (transform_times, &BLUE, "Transform"),
         (triangle_times, &RED, "Triangle"),
         (merge_times, &GREEN, "Merge"),
+        (raylib_times, &BLACK, "Raylib"),
         (frame_times, &MAGENTA, "Frame"),
     ];
 
