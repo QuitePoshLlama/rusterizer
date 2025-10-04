@@ -184,6 +184,7 @@ fn main() {
         }
         
         //new_yaw += 0.01;
+        let lighting_direction = transformation.transform_direction(Point3D { x: -1.0, y: 0.0, z: 0.0 });
         
         let world_height = (cam.fov * 0.5).tan() * 2.0;
         let scaled_inv_world_height = resolution.y / world_height;
@@ -276,8 +277,8 @@ fn main() {
 
                         rect_s.set_depth_quad(x-rect_s.rect.min_x, y-rect_s.rect.min_y, depth, pass_mask);
 
-                        let (r,g,b,a) = obj_texture.sample_quad(texture_coord.x, texture_coord.y);
-                        let (r,g,b,a) = shade_quad(r, g, b, a, Point3Dx4 { x: (normal.x), y: (normal.y), z: (normal.z) }, transformation.transform_direction(Point3D { x: -1.0, y: 0.0, z: 0.0 }) );
+                        let (r,g,b,a) = obj_texture.sample_quad_test(texture_coord.x, texture_coord.y);
+                        let (r,g,b,a) = shade_quad(r, g, b, a, Point3Dx4 { x: (normal.x), y: (normal.y), z: (normal.z) }, lighting_direction );
                         rect_s.set_pixel_quad(x-rect_s.rect.min_x, y-rect_s.rect.min_y, r, g, b, a, pass_mask);
 
                     }

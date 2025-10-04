@@ -36,22 +36,19 @@ impl Texture {
         )
     }
 
-    pub fn sample_quad_test(&self, u: f32x4, v: f32x4) -> (f32x4, f32x4, f32x4, f32x4) {
-        let mut r = [0.0f32; 4];
-        let mut g = [0.0f32; 4];
-        let mut b = [0.0f32; 4];
-        let mut a = [0.0f32; 4];
+pub fn sample_quad_test(&self, u: f32x4, v: f32x4) -> (f32x4, f32x4, f32x4, f32x4) {
+    let (sr0, sg0, sb0, sa0) = self.sample(u[0], v[0]);
+    let (sr1, sg1, sb1, sa1) = self.sample(u[1], v[1]);
+    let (sr2, sg2, sb2, sa2) = self.sample(u[2], v[2]);
+    let (sr3, sg3, sb3, sa3) = self.sample(u[3], v[3]);
 
-        for lane in 0..4 {
-            let (sr, sg, sb, sa) = self.sample(u[lane], v[lane]);
-            r[lane] = sr as f32;
-            g[lane] = sg as f32;
-            b[lane] = sb as f32;
-            a[lane] = sa as f32;
-        }
-
-        (f32x4::from_array(r), f32x4::from_array(g), f32x4::from_array(b), f32x4::from_array(a))
-    }
+    (
+        f32x4::from_array([sr0 as f32, sr1 as f32, sr2 as f32, sr3 as f32]),
+        f32x4::from_array([sg0 as f32, sg1 as f32, sg2 as f32, sg3 as f32]),
+        f32x4::from_array([sb0 as f32, sb1 as f32, sb2 as f32, sb3 as f32]),
+        f32x4::from_array([sa0 as f32, sa1 as f32, sa2 as f32, sa3 as f32]),
+    )
+}
 
     pub fn sample_quad(&self, u: f32x4, v: f32x4) -> (f32x4, f32x4, f32x4, f32x4) {
         let width  = self.width as f32;
