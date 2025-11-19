@@ -16,7 +16,7 @@ TODO:
 * [x] Multithreading
 * [ ] Find way to multithread unsafe writing to shared buffer
 * [ ] Min-max performance (SIMD)?
-* [ ] Geometry culling?
+* [x] Geometry culling?
 * [ ] Adapting to write a GPU shader
 * [ ] Raytracing
 * [ ] Loading/transformming multiple models and arranging scenes
