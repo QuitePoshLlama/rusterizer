@@ -1,5 +1,7 @@
-use std::path::Path;
+use std::{path::Path, simd::num::SimdFloat};
 use image::{DynamicImage, GenericImageView};
+use std::simd::{Simd, StdFloat, u8x4, usizex4, f32x4};
+use std::simd::num::SimdUint;
 
 pub struct Texture {
     pub width: u32,
@@ -33,4 +35,37 @@ impl Texture {
             self.rgba[idx + 3],
         )
     }
+
+pub fn sample_quad_test(&self, u: f32x4, v: f32x4) -> (f32x4, f32x4, f32x4, f32x4) {
+    let (sr0, sg0, sb0, sa0) = self.sample(u[0], v[0]);
+    let (sr1, sg1, sb1, sa1) = self.sample(u[1], v[1]);
+    let (sr2, sg2, sb2, sa2) = self.sample(u[2], v[2]);
+    let (sr3, sg3, sb3, sa3) = self.sample(u[3], v[3]);
+
+    (
+        f32x4::from_array([sr0 as f32, sr1 as f32, sr2 as f32, sr3 as f32]),
+        f32x4::from_array([sg0 as f32, sg1 as f32, sg2 as f32, sg3 as f32]),
+        f32x4::from_array([sb0 as f32, sb1 as f32, sb2 as f32, sb3 as f32]),
+        f32x4::from_array([sa0 as f32, sa1 as f32, sa2 as f32, sa3 as f32]),
+    )
 }
+
+    pub fn sample_quad(&self, u: f32x4, v: f32x4) -> (f32x4, f32x4, f32x4, f32x4) {
+        let width  = self.width as f32;
+        let height = self.height as f32;
+
+        // Convert UV to pixel coords
+        let x = (u * f32x4::splat(width  - 1.0)).cast::<usize>();
+        let y = (v * f32x4::splat(height - 1.0)).cast::<usize>();
+
+        // Index into texel (RGBA = 4 bytes)
+        let idx: usizex4 = (y * usizex4::splat(self.width as usize) + x) * Simd::splat(4);
+
+        let gathered_simd_r: f32x4 = Simd::gather_or_default(&self.rgba, idx).cast::<f32>();
+        let gathered_simd_g: f32x4 = Simd::gather_or_default(&self.rgba, idx+Simd::splat(1)).cast::<f32>();
+        let gathered_simd_b: f32x4 = Simd::gather_or_default(&self.rgba, idx+Simd::splat(2)).cast::<f32>();
+        let gathered_simd_a: f32x4 = Simd::gather_or_default(&self.rgba, idx+Simd::splat(3)).cast::<f32>();
+        //println!("{gathered_simd_r:?},{gathered_simd_g:?},{gathered_simd_b:?},{gathered_simd_a:?}");
+        (gathered_simd_r, gathered_simd_g, gathered_simd_b, gathered_simd_a)
+    }
+} 

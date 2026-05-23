@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+
 // External crates
 use raylib::prelude::*;
 use rayon::prelude::*;
@@ -7,6 +9,8 @@ use plotters::style::Color;
 // STD library
 use std::time::Instant;
 use std::path::Path;
+use std::cell::UnsafeCell;
+
 // Internal modules
 mod point2d;
 mod point3d;
@@ -65,6 +69,13 @@ fn main() {
     let rects = subdivide(width, height,depth+1);
     println!("Rectangle dimensions for threads: {:?}", rects);
 
+    for rect in &rects {
+        if ((rect.min_x - rect.max_x) % 4) != 0 {
+            println!("Rectangle dimensions invalid!");
+            panic!();
+        }
+    }
+
     // Create multiple 'sub-screenspaces' for each thread to work and join later
     let mut rect_buffers: Vec<ScreenSpace> = rects
         .iter()
@@ -73,8 +84,8 @@ fn main() {
                 rect: *rect,
                 width: rect.width(),
                 height: rect.height(),
-                rgba: vec![0; (rect.width() * rect.height() * 4) as usize],
-                depth: vec![f32::INFINITY; (rect.width() * rect.height()) as usize],
+                rgba: UnsafeCell::new(vec![0; (rect.width() * rect.height() * 4) as usize]),
+                depth: UnsafeCell::new(vec![f32::INFINITY; (rect.width() * rect.height()) as usize]),
             }
         })
         .collect();
@@ -121,16 +132,21 @@ fn main() {
             break;
         }
 
+        let frame_start = std::time::Instant::now();
+
         cam.camera_update(&r1);
                     
         // Clear buffers each frame
+/* 
         for thread_buf in &mut rect_buffers {
             thread_buf.clear(0,0,0,255);
         }
-
-        let frame_start = std::time::Instant::now();
+*/
+       
+        screen.clear(0, 0, 0, 255);
         
-        new_yaw += 0.01;
+        //new_yaw += 0.01;
+        let lighting_direction = transformation.transform_direction(Point3D { x: -1.0, y: 0.0, z: 0.0 });
         
         let world_height = (cam.fov * 0.5).tan() * 2.0;
         let scaled_inv_world_height = resolution.y / world_height;
@@ -205,7 +221,7 @@ fn main() {
                             let depths: Point3D = Point3D { x: tri.a.z, y: tri.b.z, z: tri.c.z };
                             let depth: f32 = 1.0 / dot3(depths, weights);
                             
-                            if depth > rect_s.get_depth(x-rect_s.rect.min_x, y-rect_s.rect.min_y) {
+                            if depth > screen.get_depth(x, y) {
                                 continue;
                             }
 
@@ -220,16 +236,16 @@ fn main() {
                                 z: dot3(Point3D { x: tri.na.z * depths.x, y: tri.nb.z * depths.y, z: tri.nc.z * depths.z }, weights),
                             } * depth;
 
-                            rect_s.set_depth(x-rect_s.rect.min_x, y-rect_s.rect.min_y, depth);
+                            screen.unsafe_set_depth(x, y, depth);
 
                             let show_depth: bool = false;
                             if show_depth {
                                 let depth_gray: u8 = depth_to_u8(depth);
-                                rect_s.set_pixel(x-rect_s.rect.min_x, y-rect_s.rect.min_y, depth_gray, depth_gray, depth_gray, 255);
+                                screen.unsafe_set_pixel(x, y, depth_gray, depth_gray, depth_gray, 255);
                             } else {
                                 let (r,g,b,a) = obj_texture.sample(texture_coord.x, texture_coord.y);
-                                let (r,g,b,a) = shade_pixel(r, g, b, a, normal, transformation.transform_direction(Point3D { x: -1.0, y: 0.0, z: 0.0 }) );
-                                rect_s.set_pixel(x-rect_s.rect.min_x, y-rect_s.rect.min_y, r, g, b, a);
+                                let (r,g,b,a) = shade_pixel(r, g, b, a, normal, lighting_direction );
+                                screen.unsafe_set_pixel(x, y, r, g, b, a);
                             }
                         }
                     }
@@ -238,33 +254,8 @@ fn main() {
         });
         let triangle_time = triangle_start.elapsed();
 
-        // Directly copy each rect into the main screen buffer. This can be removed if we dont use seperate buffers in the part above
-        let merge_start = Instant::now();
-        for rect_s in &rect_buffers {
-            let rect_width = rect_s.rect.max_x - rect_s.rect.min_x;
-            let rect_height = rect_s.rect.max_y - rect_s.rect.min_y;
-
-            for y in 0..rect_height {
-                let screen_y = rect_s.rect.min_y + y;
-                if screen_y >= screen.height {
-                    continue;
-                }
-
-                let screen_row_start = ((screen_y * screen.width + rect_s.rect.min_x) * 4) as usize;
-                let rect_row_start = (y * rect_width * 4) as usize;
-
-                // Determine the end of the row (clamp to screen width)
-                let row_end = screen_row_start + (rect_width.min(screen.width - rect_s.rect.min_x) * 4) as usize;
-
-                // Copy the row directly into screen.rgba
-                screen.rgba[screen_row_start..row_end]
-                    .copy_from_slice(&rect_s.rgba[rect_row_start..rect_row_start + (row_end - screen_row_start)]);
-            }
-        }
-        let merge_time = merge_start.elapsed();
-
         // Put it in a window!
-        let _ = texture.update_texture(&screen.rgba);
+        let _ = texture.update_texture(unsafe {&*screen.rgba.get()});
         let window_width = r1.get_screen_width();
         let window_height = r1.get_screen_height();
         let frame_time = frame_start.elapsed();
@@ -272,7 +263,6 @@ fn main() {
         // Collect timing data
         transform_times.push(transform_time.as_micros() as f64);
         triangle_times.push(triangle_time.as_micros() as f64);
-        merge_times.push(merge_time.as_micros() as f64);
         frame_times.push(frame_time.as_micros() as f64);
 
         let mut d = r1.begin_drawing(&thread);
@@ -286,7 +276,7 @@ fn main() {
             raylib::prelude::Color::WHITE
         );
         // Perf stats
-        d.draw_text(&format!("Transform time: {:.2?}\nTriangle time: {:.2?}\nMerge time: {:.2?}\nFrame time: {:.2?}", transform_time, triangle_time, merge_time, frame_time), 10, 10, 20, raylib::prelude::Color::LIME);
+        d.draw_text(&format!("Transform time: {:.2?}\nTriangle time: {:.2?}\nFrame time: {:.2?}", transform_time, triangle_time, frame_time), 10, 10, 20, raylib::prelude::Color::LIME);
     }
     use std::env;
     let current_dir = env::current_dir().unwrap();
